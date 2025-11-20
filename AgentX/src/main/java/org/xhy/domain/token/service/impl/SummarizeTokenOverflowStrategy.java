@@ -66,7 +66,7 @@ public class SummarizeTokenOverflowStrategy implements TokenOverflowStrategy {
         List<TokenMessage> retainedMessages = new ArrayList<>(
                 sortedMessages.subList(sortedMessages.size() - threshold, sortedMessages.size()));
 
-        // 生成新的摘要消息
+        // 生成新的摘要消息   generateSummary调用目前的llm来实现
         TokenMessage newSummary = this.generateSummary(messagesToSummarize, tokenOverflowConfig, messages);
         // 添加摘要消息到活跃消息列表
         retainedMessages.add(0, newSummary);

@@ -79,12 +79,12 @@ services:
       DB_NAME: ${DB_NAME:-agentx}
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      
+
       # Spring配置
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
       JPA_DDL_AUTO: ${JPA_DDL_AUTO:-update}
       SHOW_SQL: ${SHOW_SQL:-true}
-      
+
       # 默认用户配置
       AGENTX_ADMIN_EMAIL: ${AGENTX_ADMIN_EMAIL:-admin@agentx.ai}
       AGENTX_ADMIN_PASSWORD: ${AGENTX_ADMIN_PASSWORD:-admin123}
@@ -92,25 +92,25 @@ services:
       AGENTX_TEST_ENABLED: ${AGENTX_TEST_ENABLED:-true}
       AGENTX_TEST_EMAIL: ${AGENTX_TEST_EMAIL:-test@agentx.ai}
       AGENTX_TEST_PASSWORD: ${AGENTX_TEST_PASSWORD:-test123}
-      
+
       # 消息队列配置
       RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
       RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
       RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-guest}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
-      
+
       # 日志配置
       LOG_LEVEL_ROOT: ${LOG_LEVEL_ROOT:-info}
       LOG_LEVEL_APP: ${LOG_LEVEL_APP:-debug}
-      
+
       # 安全配置
       JWT_SECRET: ${JWT_SECRET:-default_jwt_secret_please_change_in_production}
-      
+
       # 高可用网关配置
       HIGH_AVAILABILITY_ENABLED: ${HIGH_AVAILABILITY_ENABLED:-false}
       HIGH_AVAILABILITY_GATEWAY_URL: ${HIGH_AVAILABILITY_GATEWAY_URL:-http://api-gateway:8081}
       HIGH_AVAILABILITY_API_KEY: ${HIGH_AVAILABILITY_API_KEY:-default-api-key}
-      
+
       # 支付配置
       ALIPAY_APP_ID: ${ALIPAY_APP_ID:-your_alipay_app_id}
       ALIPAY_PRIVATE_KEY: ${ALIPAY_PRIVATE_KEY:-your_alipay_private_key}
@@ -118,17 +118,20 @@ services:
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-your_stripe_secret_key}
       STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-your_stripe_publishable_key}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-your_stripe_webhook_secret}
-      
+
       # GitHub集成配置
       GITHUB_REPO_NAME: ${GITHUB_REPO_NAME:-agent-mcp-community}
       GITHUB_USERNAME: ${GITHUB_USERNAME:-lucky-aeon}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-your_github_token}
-      
+
       # 其他配置
       FILE_STORAGE_PATH: ${FILE_STORAGE_PATH:-/app/storage}
     volumes:
       - storage-data:/app/storage
       - ./logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 解决 Maven 依赖重复下载的关键：
+      - ~/.m2:/root/.m2
     ports:
       - "${BACKEND_PORT:-8088}:8088"
       - "${DEBUG_PORT:-5005}:5005"  # 调试端口（仅开发环境）

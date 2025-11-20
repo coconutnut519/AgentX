@@ -12,33 +12,45 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
-/** 滑动窗口Token超限处理策略实现 根据Token数量保留最新消息，超出窗口的旧消息将被丢弃 */
+/**
+ * 滑动窗口Token超限处理策略实现 根据Token数量保留最新消息，超出窗口的旧消息将被丢弃
+ */
 @Service
 public class SlidingWindowTokenOverflowStrategy implements TokenOverflowStrategy {
 
-    /** 默认最大Token数 */
+    /**
+     * 默认最大Token数
+     */
     private static final int DEFAULT_MAX_TOKENS = 4096;
 
-    /** 默认预留缓冲比例 */
+    /**
+     * 默认预留缓冲比例
+     */
     private static final double DEFAULT_RESERVE_RATIO = 0.1;
 
-    /** 策略配置 */
+    /**
+     * 策略配置
+     */
     private final TokenOverflowConfig config;
 
-    /** 构造函数
-     * 
-     * @param config 策略配置 */
+    /**
+     * 构造函数
+     *
+     * @param config 策略配置
+     */
     public SlidingWindowTokenOverflowStrategy(TokenOverflowConfig config) {
         this.config = config;
     }
 
-    /** 处理消息列表，应用滑动窗口策略
-     * 
+    /**
+     * 处理消息列表，应用滑动窗口策略
+     *
      * @param messages 待处理的消息列表
-     * @return 处理后保留的消息列表 */
+     * @return 处理后保留的消息列表
+     */
     @Override
     public TokenProcessResult process(List<TokenMessage> messages, TokenOverflowConfig tokenOverflowConfig) {
-        if (!needsProcessing(messages)) {
+        if (!needsProcessing(messages)) {//needProcessing是否需要被处理
             TokenProcessResult result = new TokenProcessResult();
             result.setRetainedMessages(messages);
             result.setStrategyName(getName());
@@ -49,7 +61,7 @@ public class SlidingWindowTokenOverflowStrategy implements TokenOverflowStrategy
 
         // 按时间排序，保留最新的消息
         List<TokenMessage> sortedMessages = new ArrayList<>(messages);
-        Collections.sort(sortedMessages, Comparator.comparing(TokenMessage::getCreatedAt).reversed());
+        Collections.sort(sortedMessages, Comparator.comparing(TokenMessage::getCreatedAt).reversed());//按照时间排序，保留最新代码
 
         // 计算可用token数（考虑预留空间）
         int maxTokens = config.getMaxTokens();
@@ -65,7 +77,7 @@ public class SlidingWindowTokenOverflowStrategy implements TokenOverflowStrategy
             if (totalTokens + messageTokens <= availableTokens) {
                 retainedMessages.add(message);
                 totalTokens += messageTokens;
-            } else {
+            } else {//直到超出
                 break;
             }
         }
@@ -80,37 +92,45 @@ public class SlidingWindowTokenOverflowStrategy implements TokenOverflowStrategy
         return result;
     }
 
-    /** 获取策略名称
-     * 
-     * @return 策略名称 */
+    /**
+     * 获取策略名称
+     *
+     * @return 策略名称
+     */
     @Override
     public String getName() {
         return TokenOverflowStrategyEnum.SLIDING_WINDOW.name();
     }
 
-    /** 判断是否需要进行Token超限处理
-     * 
+    /**
+     * 判断是否需要进行Token超限处理
+     *
      * @param messages 待处理的消息列表
-     * @return 是否需要处理 */
+     * @return 是否需要处理
+     */
     @Override
     public boolean needsProcessing(List<TokenMessage> messages) {
         if (messages == null || messages.isEmpty()) {
             return false;
         }
 
-        int totalTokens = calculateTotalTokens(messages);
+        int totalTokens = calculateTotalTokens(messages);//计算总token
         int maxTokens = config.getMaxTokens();
-        return totalTokens > maxTokens;
+        return totalTokens > maxTokens;//比较和我们预置的
     }
 
-    /** 计算消息列表的总token数 */
+    /**
+     * 计算消息列表的总token数
+     */
     private int calculateTotalTokens(List<TokenMessage> messages) {
         return messages.stream().mapToInt(m -> m.getBodyTokenCount() != null ? m.getBodyTokenCount() : 0).sum();
     }
 
-    /** 获取配置的最大Token数，如果未配置则使用默认值
-     * 
-     * @return 最大Token数 */
+    /**
+     * 获取配置的最大Token数，如果未配置则使用默认值
+     *
+     * @return 最大Token数
+     */
     private int getMaxTokens() {
         if (config == null || config.getMaxTokens() == null) {
             return DEFAULT_MAX_TOKENS;
@@ -118,9 +138,11 @@ public class SlidingWindowTokenOverflowStrategy implements TokenOverflowStrategy
         return config.getMaxTokens();
     }
 
-    /** 获取配置的预留比例，如果未配置则使用默认值
-     * 
-     * @return 预留比例 */
+    /**
+     * 获取配置的预留比例，如果未配置则使用默认值
+     *
+     * @return 预留比例
+     */
     private double getReserveRatio() {
         if (config == null || config.getReserveRatio() == null) {
             return DEFAULT_RESERVE_RATIO;

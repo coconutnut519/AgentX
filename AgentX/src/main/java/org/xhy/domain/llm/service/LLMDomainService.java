@@ -332,7 +332,10 @@ public class LLMDomainService {
     public void updateProviderStatus(String providerId, String userId) {
         LambdaUpdateWrapper<ProviderEntity> updateWrapper = Wrappers.lambdaUpdate(ProviderEntity.class)
                 .eq(ProviderEntity::getId, providerId).eq(ProviderEntity::getUserId, userId)
-                .setSql("status = NOT status");
+                .setSql("status = NOT status");//取反，若是两个table，没有互相通信，就搞错了，要前端自己手动去传
+        //SET status = NOT status
+        //WHERE id = ?
+        //  AND user_id = ?;
         providerRepository.checkedUpdate(updateWrapper);
     }
 

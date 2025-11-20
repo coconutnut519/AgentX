@@ -1,7 +1,8 @@
+import org.xhy.infrastructure.exception.BusinessException;
 # 后端开发规范
 ## 1. 代码规范
 ### 1.1 注释要求
-+ 禁止使用 Lombok 注解
++ 禁止使用 Lombok 注解   开源项目有些人没有Lombok插件，无法启用
 + 每个类、方法、字段都必须包含完整的 Javadoc 注释
     - 注释需说明目的、参数、返回值及可能抛出的异常
     - 目的：保证代码开源质量，便于教学和维护
@@ -23,7 +24,7 @@
     - 接收参数使用 `XxxRequestObject`
     - 必须使用 `@Validated` 进行基础数据校验
 + **Application层**：
-    - 负责业务流程编排
+    - 负责业务流程编排  调用Domain
     - 使用 `XxxDTO` 进行数据传输
     - 执行业务逻辑校验（数据存在性、业务规则等）
 + **Domain层**：

@@ -22,7 +22,7 @@ public class TokenDomainService {
      * @param messages 待处理的消息列表
      * @param config 处理配置
      * @return 处理结果 */
-    public TokenProcessResult processMessages(List<TokenMessage> messages, TokenOverflowConfig config) {
+    public TokenProcessResult processMessages(List<TokenMessage> messages, TokenOverflowConfig config) {//app层暴露的方法
         // 创建策略
         TokenOverflowStrategy strategy = strategyFactory.createStrategy(config);
 

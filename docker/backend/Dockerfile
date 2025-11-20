@@ -3,7 +3,8 @@ FROM eclipse-temurin:17-jdk-alpine as builder
 
 # 设置工作目录
 WORKDIR /app
-
+# 【新增】一键生成阿里云 Maven 镜像配置文件
+RUN echo '<?xml version="1.0" encoding="UTF-8"?><settings xmlns="http://maven.apache.org/SETTINGS/1.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 http://maven.apache.org/xsd/settings-1.0.0.xsd"><mirrors><mirror><id>aliyunmaven</id><mirrorOf>central</mirrorOf><name>阿里云公共仓库</name><url>https://maven.aliyun.com/repository/public</url></mirror></mirrors></settings>' > settings.xml
 # 复制Maven配置文件
 COPY AgentX/pom.xml .
 COPY AgentX/mvnw .
@@ -18,8 +19,8 @@ RUN ./mvnw dependency:go-offline -B
 # 复制源代码
 COPY AgentX/src src
 
-# 构建应用
-RUN ./mvnw clean package -DskipTests -B
+# 【修改】打包时也加上 -s settings.xml
+RUN ./mvnw clean package -DskipTests -B -s settings.xml
 
 # 运行时镜像
 FROM eclipse-temurin:17-jre-alpine
