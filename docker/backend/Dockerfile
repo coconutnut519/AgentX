@@ -5,22 +5,26 @@ FROM eclipse-temurin:17-jdk-alpine as builder
 WORKDIR /app
 # 【新增】一键生成阿里云 Maven 镜像配置文件
 RUN echo '<?xml version="1.0" encoding="UTF-8"?><settings xmlns="http://maven.apache.org/SETTINGS/1.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 http://maven.apache.org/xsd/settings-1.0.0.xsd"><mirrors><mirror><id>aliyunmaven</id><mirrorOf>central</mirrorOf><name>阿里云公共仓库</name><url>https://maven.aliyun.com/repository/public</url></mirror></mirrors></settings>' > settings.xml
-# 复制Maven配置文件
-COPY AgentX/pom.xml .
-COPY AgentX/mvnw .
-COPY AgentX/.mvn .mvn
+COPY AgentX/pom.xml ./
+COPY AgentX/mvnw ./
+COPY AgentX/.mvn/ ./.mvn/
 
 # 修复mvnw执行权限（Windows兼容）
-RUN chmod +x ./mvnw
+RUN chmod +x ./mvnw && sed -i 's/\r$//' ./mvnw
 
-# 下载依赖（利用Docker缓存）
-RUN ./mvnw dependency:go-offline -B
 
+# 【关键修改 1】：引入 BuildKit 缓存挂载，并建议加上 -s settings.xml 使用阿里云源
+RUN --mount=type=cache,target=/root/.m2 \
+    ./mvnw dependency:go-offline -B -s settings.xml
 # 复制源代码
-COPY AgentX/src src
+COPY AgentX/src/ ./src/
 
-# 【修改】打包时也加上 -s settings.xml
-RUN ./mvnw clean package -DskipTests -B -s settings.xml
+
+
+# 【关键修改 2】：打包时同样引入 BuildKit 缓存挂载
+# 4. 执行下载
+RUN --mount=type=cache,target=/root/.m2 \
+    ./mvnw package -DskipTests
 
 # 运行时镜像
 FROM eclipse-temurin:17-jre-alpine

@@ -5,15 +5,22 @@ FROM maven:3.9-eclipse-temurin-17 AS dev
 # 设置工作目录
 WORKDIR /app
 
-# 仅复制 Maven 必要文件以利用构建缓存
+# 2. 复制项目定义文件（注意现在是双层路径）
 COPY AgentX/pom.xml ./
-COPY AgentX/.mvn ./.mvn
+COPY AgentX/mvnw ./
+COPY AgentX/.mvn/ ./.mvn/
+RUN chmod +x ./mvnw && sed -i 's/\r$//' ./mvnw
+# 增加一个查看命令，用来在构建失败时帮你 debug
+RUN ls -la /app
 
-# 预下载依赖（go-offline），加速后续构建
-RUN mvn -B -e -Dmaven.test.skip=true dependency:go-offline
+# 一键生成阿里云 Maven 镜像配置文件
+RUN echo '<?xml version="1.0" encoding="UTF-8"?><settings xmlns="http://maven.apache.org/SETTINGS/1.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 http://maven.apache.org/xsd/settings-1.0.0.xsd"><mirrors><mirror><id>aliyunmaven</id><mirrorOf>central</mirrorOf><name>阿里云公共仓库</name><url>https://maven.aliyun.com/repository/public</url></mirror></mirrors></settings>' > settings.xml
+# 5. 预下载依赖
+RUN --mount=type=cache,target=/root/.m2 \
+    ./mvnw dependency:go-offline -B -s settings.xml
 
-# 复制源代码
-COPY AgentX/src ./src
+# 6. 复制源代码（同样需要双层路径）
+COPY AgentX/src/ ./src/
 
 # 创建日志和存储目录
 RUN mkdir -p logs storage
