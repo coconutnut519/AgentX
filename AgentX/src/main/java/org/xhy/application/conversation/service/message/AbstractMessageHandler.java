@@ -25,6 +25,7 @@ import org.xhy.domain.conversation.constant.Role;
 import org.xhy.domain.conversation.model.ContextEntity;
 import org.xhy.domain.conversation.model.MessageEntity;
 import org.xhy.domain.conversation.service.MessageDomainService;
+import org.xhy.domain.conversation.service.ConversationVectorRecallDomainService;
 import org.xhy.domain.conversation.service.SessionDomainService;
 import org.xhy.domain.llm.model.HighAvailabilityResult;
 import org.xhy.domain.llm.model.ModelEntity;
@@ -85,6 +86,8 @@ public abstract class AbstractMessageHandler {
     protected MemoryDomainService memoryDomainService;
     @Autowired
     protected MemoryExtractorService memoryExtractorService;
+    @Autowired
+    protected ConversationVectorRecallDomainService conversationVectorRecallDomainService;
     // 无需事件或单独服务，直接调用异步方法
     // 记忆注入常量（默认开启）
     private static final String MEMORY_SECTION_TITLE = "[记忆要点]";
@@ -273,8 +276,10 @@ public abstract class AbstractMessageHandler {
 
             // 7. 保存消息
             messageDomainService.updateMessage(userEntity);
+            indexConversationMessage(chatContext, userEntity);
             messageDomainService.saveMessageAndUpdateContext(Collections.singletonList(llmEntity),
                     chatContext.getContextEntity());
+            indexConversationMessage(chatContext, llmEntity);
 
             // 8. 发送完整响应
             AgentChatResponse response = new AgentChatResponse(chatResponse.aiMessage().text(), true);
@@ -326,6 +331,20 @@ public abstract class AbstractMessageHandler {
         messageDomainService.saveMessageAndUpdateContext(Collections.singletonList(userEntity), contextEntity);
     }
 
+    private void indexConversationMessage(ChatContext chatContext, MessageEntity messageEntity) {
+        if (chatContext == null || messageEntity == null) {
+            return;
+        }
+
+        try {
+            conversationVectorRecallDomainService.upsertMessage(chatContext.getUserId(), chatContext.getSessionId(),
+                    messageEntity);
+        } catch (Exception e) {
+            logger.warn("Conversation recall indexing skipped, sessionId={}, messageId={}, err={}",
+                    chatContext.getSessionId(), messageEntity.getId(), e.getMessage());
+        }
+    }
+
     /** 子类实现具体的聊天处理逻辑 */
     protected <T> void processChat(Agent agent, T connection, MessageTransport<T> transport, ChatContext chatContext,
             MessageEntity userEntity, MessageEntity llmEntity) {
@@ -374,9 +393,11 @@ public abstract class AbstractMessageHandler {
             // 按仅用户抽取策略，不记录AI文本
 
             messageDomainService.updateMessage(userEntity);
+            indexConversationMessage(chatContext, userEntity);
             // 保存AI消息
             messageDomainService.saveMessageAndUpdateContext(Collections.singletonList(llmEntity),
                     chatContext.getContextEntity());
+            indexConversationMessage(chatContext, llmEntity);
 
             // 发送结束消息
             transport.sendEndMessage(connection, AgentChatResponse.buildEndMessage(MessageType.TEXT));
@@ -412,6 +433,7 @@ public abstract class AbstractMessageHandler {
                 llmEntity.setContent(messageBuilder.get().toString());
                 messageDomainService.saveMessageAndUpdateContext(Collections.singletonList(llmEntity),
                         chatContext.getContextEntity());
+                indexConversationMessage(chatContext, llmEntity);
                 messageBuilder.set(new StringBuilder());
             }
             String message = "执行工具：" + toolExecution.request().name();

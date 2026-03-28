@@ -3,48 +3,69 @@ package org.xhy.domain.token.model.config;
 import org.springframework.stereotype.Service;
 import org.xhy.domain.shared.enums.TokenOverflowStrategyEnum;
 import org.xhy.infrastructure.llm.config.ProviderConfig;
-import org.xhy.infrastructure.llm.protocol.enums.ProviderProtocol;
 
-/** Token超限处理配置基础类 */
+/** Base config for token overflow handling. */
 @Service
 public class TokenOverflowConfig {
 
-    /** 策略类型 */
+    /** Overflow strategy type. */
     private TokenOverflowStrategyEnum strategyType;
 
-    /** 最大Token数，适用于滑动窗口和摘要策略 */
+    /** Max context token budget. */
     private Integer maxTokens;
 
-    /** 预留缓冲比例，适用于滑动窗口策略 范围0-1之间的小数，表示预留的空间比例 */
+    /**
+     * Ratio in [0, 1].
+     * Sliding window uses it as headroom for future input/output tokens.
+     * Summarize uses it as the recent-message budget ratio.
+     */
     private Double reserveRatio;
 
-    /** 摘要触发阈值（消息数量），适用于摘要策略 */
+    /**
+     * Summarize trigger threshold.
+     * 1-100 means token usage percent of maxTokens.
+     * Values above 100 are treated as legacy message-count thresholds.
+     */
     private Integer summaryThreshold;
+
+    /** Query used by relevance recall strategies. */
+    private String recallQuery;
+
+    /** Current user scope for relevance recall. */
+    private String userId;
+
+    /** Current session scope for relevance recall. */
+    private String sessionId;
+
+    /** Trigger threshold for relevance recall, interpreted as maxTokens percent. */
+    private Integer recallTriggerThreshold;
+
+    /** Maximum number of recalled message groups kept before token pruning. */
+    private Integer recallTopK;
+
+    /** Minimum acceptable recall score. */
+    private Double recallMinScore;
+
+    /** Maximum number of candidates scored during recall. */
+    private Integer recallMaxCandidates;
+
+    /** Reserved for future rerank integration. */
+    private Boolean enableRerank;
 
     private ProviderConfig providerConfig;
 
-    /** 默认构造函数 */
     public TokenOverflowConfig() {
         this.strategyType = TokenOverflowStrategyEnum.NONE;
     }
 
-    /** 带策略类型的构造函数
-     * 
-     * @param strategyType 策略类型 */
     public TokenOverflowConfig(TokenOverflowStrategyEnum strategyType) {
         this.strategyType = strategyType;
     }
 
-    /** 获取策略类型
-     * 
-     * @return 策略类型枚举值 */
     public TokenOverflowStrategyEnum getStrategyType() {
         return strategyType;
     }
 
-    /** 设置策略类型
-     * 
-     * @param strategyType 策略类型 */
     public void setStrategyType(TokenOverflowStrategyEnum strategyType) {
         this.strategyType = strategyType;
     }
@@ -73,34 +94,98 @@ public class TokenOverflowConfig {
         this.summaryThreshold = summaryThreshold;
     }
 
-    /** 创建默认的无策略配置
-     * 
-     * @return 无策略配置实例 */
+    public String getRecallQuery() {
+        return recallQuery;
+    }
+
+    public void setRecallQuery(String recallQuery) {
+        this.recallQuery = recallQuery;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public void setSessionId(String sessionId) {
+        this.sessionId = sessionId;
+    }
+
+    public Integer getRecallTriggerThreshold() {
+        return recallTriggerThreshold;
+    }
+
+    public void setRecallTriggerThreshold(Integer recallTriggerThreshold) {
+        this.recallTriggerThreshold = recallTriggerThreshold;
+    }
+
+    public Integer getRecallTopK() {
+        return recallTopK;
+    }
+
+    public void setRecallTopK(Integer recallTopK) {
+        this.recallTopK = recallTopK;
+    }
+
+    public Double getRecallMinScore() {
+        return recallMinScore;
+    }
+
+    public void setRecallMinScore(Double recallMinScore) {
+        this.recallMinScore = recallMinScore;
+    }
+
+    public Integer getRecallMaxCandidates() {
+        return recallMaxCandidates;
+    }
+
+    public void setRecallMaxCandidates(Integer recallMaxCandidates) {
+        this.recallMaxCandidates = recallMaxCandidates;
+    }
+
+    public Boolean getEnableRerank() {
+        return enableRerank;
+    }
+
+    public void setEnableRerank(Boolean enableRerank) {
+        this.enableRerank = enableRerank;
+    }
+
     public static TokenOverflowConfig createDefault() {
         return new TokenOverflowConfig(TokenOverflowStrategyEnum.NONE);
     }
 
-    /** 创建滑动窗口策略配置
-     * 
-     * @param maxTokens 最大Token数
-     * @param reserveRatio 预留缓冲比例，默认0.1
-     * @return 滑动窗口策略配置实例 */
     public static TokenOverflowConfig createSlidingWindowConfig(int maxTokens, Double reserveRatio) {
         TokenOverflowConfig config = new TokenOverflowConfig(TokenOverflowStrategyEnum.SLIDING_WINDOW);
         config.setMaxTokens(maxTokens);
-        config.setReserveRatio(reserveRatio != null ? reserveRatio : 0.1);
+        config.setReserveRatio(reserveRatio != null ? reserveRatio : 0.1D);
         return config;
     }
 
-    /** 创建摘要策略配置
-     * 
-     * @param maxTokens 最大Token数
-     * @param summaryThreshold 摘要触发阈值，默认20
-     * @return 摘要策略配置实例 */
     public static TokenOverflowConfig createSummaryConfig(int maxTokens, Integer summaryThreshold) {
         TokenOverflowConfig config = new TokenOverflowConfig(TokenOverflowStrategyEnum.SUMMARIZE);
         config.setMaxTokens(maxTokens);
-        config.setSummaryThreshold(summaryThreshold != null ? summaryThreshold : 20);
+        config.setSummaryThreshold(summaryThreshold != null ? summaryThreshold : 80);
+        return config;
+    }
+
+    public static TokenOverflowConfig createRelevanceRecallConfig(int maxTokens, Integer triggerThreshold,
+            Integer recallTopK, Double recallMinScore) {
+        TokenOverflowConfig config = new TokenOverflowConfig(TokenOverflowStrategyEnum.RELEVANCE_RECALL);
+        config.setMaxTokens(maxTokens);
+        config.setRecallTriggerThreshold(triggerThreshold != null ? triggerThreshold : 80);
+        config.setRecallTopK(recallTopK != null ? recallTopK : 4);
+        config.setRecallMinScore(recallMinScore != null ? recallMinScore : 0.15D);
+        config.setRecallMaxCandidates(20);
+        config.setReserveRatio(0.4D);
+        config.setEnableRerank(Boolean.FALSE);
         return config;
     }
 

@@ -5,35 +5,46 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import org.xhy.domain.shared.enums.TokenOverflowStrategyEnum;
 
-/** 保存模型配置请求对象 */
+/** Request payload for saving model config. */
 public class UpdateModelConfigRequest {
 
-    /** 模型ID */
     @NotBlank(message = "模型ID不能为空")
     private String modelId;
 
-    /** 温度参数，范围0-2 */
     @Min(value = 0, message = "temperature最小值为0")
     @Max(value = 2, message = "temperature最大值为2")
     private Double temperature;
 
-    /** Top P参数，范围0-1 */
     @Min(value = 0, message = "topP最小值为0")
     @Max(value = 1, message = "topP最大值为1")
     private Double topP;
 
-    /** topK */
     private Integer topK;
-    /** 最大Token数，适用于滑动窗口和摘要策略 */
+
     @Min(value = 1, message = "maxTokens最小值为1")
     private Integer maxTokens;
 
-    /** 策略类型 */
     private TokenOverflowStrategyEnum strategyType = TokenOverflowStrategyEnum.NONE;
-    /** 预留缓冲比例，适用于滑动窗口策略 范围0-1之间的小数，表示预留的空间比例 */
+
+    /**
+     * Ratio in [0, 1].
+     * Sliding window uses it as headroom.
+     * Summarize uses it as recent-message budget ratio.
+     */
     private Double reserveRatio;
-    /** 摘要触发阈值（消息数量），适用于摘要策略 */
+
+    /**
+     * Summarize trigger threshold.
+     * 1-100 means token usage percent of maxTokens.
+     * Values above 100 are treated as legacy message-count thresholds.
+     */
     private Integer summaryThreshold;
+
+    private Integer recallTriggerThreshold;
+    private Integer recallTopK;
+    private Double recallMinScore;
+    private Integer recallMaxCandidates;
+    private Boolean enableRerank;
 
     public String getModelId() {
         return modelId;
@@ -89,6 +100,46 @@ public class UpdateModelConfigRequest {
 
     public void setSummaryThreshold(Integer summaryThreshold) {
         this.summaryThreshold = summaryThreshold;
+    }
+
+    public Integer getRecallTriggerThreshold() {
+        return recallTriggerThreshold;
+    }
+
+    public void setRecallTriggerThreshold(Integer recallTriggerThreshold) {
+        this.recallTriggerThreshold = recallTriggerThreshold;
+    }
+
+    public Integer getRecallTopK() {
+        return recallTopK;
+    }
+
+    public void setRecallTopK(Integer recallTopK) {
+        this.recallTopK = recallTopK;
+    }
+
+    public Double getRecallMinScore() {
+        return recallMinScore;
+    }
+
+    public void setRecallMinScore(Double recallMinScore) {
+        this.recallMinScore = recallMinScore;
+    }
+
+    public Integer getRecallMaxCandidates() {
+        return recallMaxCandidates;
+    }
+
+    public void setRecallMaxCandidates(Integer recallMaxCandidates) {
+        this.recallMaxCandidates = recallMaxCandidates;
+    }
+
+    public Boolean getEnableRerank() {
+        return enableRerank;
+    }
+
+    public void setEnableRerank(Boolean enableRerank) {
+        this.enableRerank = enableRerank;
     }
 
     public Integer getTopK() {

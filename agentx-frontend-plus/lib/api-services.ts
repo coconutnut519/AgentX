@@ -415,6 +415,11 @@ interface ModelConfig {
   strategyType: string;
   reserveRatio: number;
   summaryThreshold: number;
+  recallTriggerThreshold?: number;
+  recallTopK?: number;
+  recallMinScore?: number;
+  recallMaxCandidates?: number;
+  enableRerank?: boolean;
 }
 
 // 获取Agent的模型配置

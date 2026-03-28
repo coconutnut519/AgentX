@@ -376,6 +376,14 @@ public class ConversationAppService {
         tokenOverflowConfig.setMaxTokens(llmModelConfig.getMaxTokens());
         tokenOverflowConfig.setSummaryThreshold(llmModelConfig.getSummaryThreshold());
         tokenOverflowConfig.setReserveRatio(llmModelConfig.getReserveRatio());
+        tokenOverflowConfig.setRecallQuery(environment.getUserMessage());
+        tokenOverflowConfig.setUserId(environment.getUserId());
+        tokenOverflowConfig.setSessionId(environment.getSessionId());
+        tokenOverflowConfig.setRecallTriggerThreshold(llmModelConfig.getRecallTriggerThreshold());
+        tokenOverflowConfig.setRecallTopK(llmModelConfig.getRecallTopK());
+        tokenOverflowConfig.setRecallMinScore(llmModelConfig.getRecallMinScore());
+        tokenOverflowConfig.setRecallMaxCandidates(llmModelConfig.getRecallMaxCandidates());
+        tokenOverflowConfig.setEnableRerank(llmModelConfig.getEnableRerank());
 
         // 设置提供商配置
         org.xhy.domain.llm.model.config.ProviderConfig providerConfig = provider.getConfig();

@@ -1,167 +1,339 @@
 package org.xhy.domain.token.service.impl;
 
-import dev.langchain4j.data.message.*;
+import dev.langchain4j.data.message.Content;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.TextContent;
+import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
-import org.apache.commons.collections4.CollectionUtils;
 import org.xhy.application.conversation.service.handler.context.AgentPromptTemplates;
 import org.xhy.domain.conversation.constant.Role;
+import org.xhy.domain.shared.enums.TokenOverflowStrategyEnum;
 import org.xhy.domain.token.model.TokenMessage;
 import org.xhy.domain.token.model.TokenProcessResult;
 import org.xhy.domain.token.model.config.TokenOverflowConfig;
-import org.xhy.domain.shared.enums.TokenOverflowStrategyEnum;
 import org.xhy.domain.token.service.TokenOverflowStrategy;
 import org.xhy.infrastructure.llm.LLMProviderService;
 import org.xhy.infrastructure.llm.config.ProviderConfig;
 
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Objects;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
-/** 摘要策略Token超限处理实现 将超出阈值的早期消息生成摘要，保留摘要和最新消息 */
+/** Token overflow strategy that summarizes old messages while keeping recent turns. */
 public class SummarizeTokenOverflowStrategy implements TokenOverflowStrategy {
 
-    /** 策略配置 */
+    private static final int DEFAULT_MAX_TOKENS = 4096;
+    private static final int DEFAULT_TRIGGER_PERCENT = 80;
+    private static final double DEFAULT_RECENT_RATIO = 0.2D;
+    private static final int MIN_SUMMARY_BUDGET = 128;
+    private static final int LEGACY_MESSAGE_COUNT_THRESHOLD = 100;
+    private static final double APPROX_CHARS_PER_TOKEN = 2.0D;
+
     private final TokenOverflowConfig config;
 
-    /** 需要进行摘要的消息 */
-    private List<TokenMessage> messagesToSummarize;
-
-    /** 生成的摘要消息对象 */
+    private List<TokenMessage> messagesToSummarize = new ArrayList<>();
     private TokenMessage summaryMessage;
 
-    /** 构造函数
-     * 
-     * @param config 策略配置 */
     public SummarizeTokenOverflowStrategy(TokenOverflowConfig config) {
         this.config = config;
-        this.messagesToSummarize = new ArrayList<>();
-        this.summaryMessage = null;
     }
 
-    /** 处理消息列表，应用摘要策略 将超过阈值的早期消息替换为一个摘要消息并添加到历史消息中，新摘要会追加到摘要记录中并更新创建时间
-     * 
-     * @param messages 待处理的消息列表
-     * @return 处理后的消息列表（包含摘要消息+保留的消息） */
     @Override
     public TokenProcessResult process(List<TokenMessage> messages, TokenOverflowConfig tokenOverflowConfig) {
-        if (!needsProcessing(messages)) {
-            TokenProcessResult result = new TokenProcessResult();
-            result.setRetainedMessages(messages);
-            result.setStrategyName(getName());
-            result.setProcessed(false);
-            result.setTotalTokens(calculateTotalTokens(messages));
-            return result;
+        TokenOverflowConfig effectiveConfig = mergeConfig(tokenOverflowConfig);
+        List<TokenMessage> sortedMessages = sortMessages(messages);
+
+        if (!needsProcessing(sortedMessages, effectiveConfig)) {
+            return buildUnprocessedResult(sortedMessages);
         }
 
-        // 按时间排序
-        List<TokenMessage> sortedMessages = messages.stream().sorted(Comparator.comparing(TokenMessage::getCreatedAt))
-                .collect(Collectors.toList());
+        RecentMessageSelection selection = selectRecentMessages(sortedMessages, effectiveConfig);
+        this.messagesToSummarize = new ArrayList<>(selection.messagesToSummarize());
 
-        // 获取需要保留的消息数量
-        int threshold = config.getSummaryThreshold();
+        if (this.messagesToSummarize.isEmpty()) {
+            return buildUnprocessedResult(sortedMessages);
+        }
 
-        // 分割消息
-        messagesToSummarize = sortedMessages.subList(0, sortedMessages.size() - threshold);
-        List<TokenMessage> retainedMessages = new ArrayList<>(
-                sortedMessages.subList(sortedMessages.size() - threshold, sortedMessages.size()));
+        int maxTokens = getMaxTokens(effectiveConfig);
+        int summaryBudget = Math.max(1, maxTokens - selection.recentTokens());
+        String summaryContent = generateSummaryContent(this.messagesToSummarize, effectiveConfig, summaryBudget);
+        int summaryTokens = clampSummaryTokens(summaryContent, summaryBudget);
 
-        // 生成新的摘要消息   generateSummary调用目前的llm来实现
-        TokenMessage newSummary = this.generateSummary(messagesToSummarize, tokenOverflowConfig, messages);
-        // 添加摘要消息到活跃消息列表
-        retainedMessages.add(0, newSummary);
-        // 创建结果对象
+        TokenMessage newSummary = createSummaryMessage(summaryContent, summaryTokens, sortedMessages);
+        List<TokenMessage> retainedMessages = new ArrayList<>();
+        retainedMessages.add(newSummary);
+        retainedMessages.addAll(selection.retainedRecentMessages());
+
+        retainedMessages = shrinkToBudget(retainedMessages, maxTokens);
+        this.summaryMessage = retainedMessages.get(0);
+
         TokenProcessResult result = new TokenProcessResult();
         result.setRetainedMessages(retainedMessages);
-        result.setSummary(newSummary.getContent());
+        result.setSummary(this.summaryMessage.getContent());
         result.setStrategyName(getName());
         result.setProcessed(true);
         result.setTotalTokens(calculateTotalTokens(retainedMessages));
-
         return result;
     }
 
-    /** 获取策略名称
-     * 
-     * @return 策略名称 */
     @Override
     public String getName() {
         return TokenOverflowStrategyEnum.SUMMARIZE.name();
     }
 
-    /** 判断是否需要进行Token超限处理
-     * 
-     * @param messages 待处理的消息列表
-     * @return 是否需要处理 */
     @Override
     public boolean needsProcessing(List<TokenMessage> messages) {
-        if (messages == null || messages.isEmpty()) {
-            return false;
-        }
-
-        return messages.size() > config.getSummaryThreshold();
+        return needsProcessing(sortMessages(messages), mergeConfig(null));
     }
 
-    /** 获取需要摘要的消息列表（按时间排序） 这是应用层应该使用的方法，用于获取需要进行摘要处理的消息对象
-     * 
-     * @return 需要摘要的消息列表（按时间从旧到新排序） */
     public List<TokenMessage> getMessagesToSummarize() {
         return messagesToSummarize;
     }
 
-    /** 生成摘要内容并更新摘要消息记录 */
-    private TokenMessage generateSummary(List<TokenMessage> messages, TokenOverflowConfig tokenOverflowConfig,
-            List<TokenMessage> historyMessages) {
-
-        ProviderConfig providerConfig = tokenOverflowConfig.getProviderConfig();
-        String summaryPrefixPrompt = "。最后请你以这段话作为生成摘要的开头返回，开头：" + AgentPromptTemplates.getSummaryPrefix();
-
-        // 使用当前服务商调用大模型
-        ChatModel chatLanguageModel = LLMProviderService.getStrand(providerConfig.getProtocol(), providerConfig);
-        SystemMessage systemMessage = new SystemMessage("你是一个专业的对话摘要生成器，请严格按照以下要求工作：\n"
-                + "1. 只基于提供的对话内容生成客观摘要，不得添加任何原对话中没有的信息\n" + "2. 特别关注：用户问题、回答中的关键信息、重要事实\n" + "3. 去除所有寒暄、表情符号和情感表达\n"
-                + "4. 使用简洁的第三人称陈述句\n" + "5. 保持时间顺序和逻辑关系\n" + "6. 示例格式：[用户]问... [AI]回答...\n" + "禁止使用任何表情符号或拟人化表达"
-                + "7. 提供的对话内容中格式与第六点的示例格式相符的，属于旧摘要，旧摘要部分必须全部保留要点" + summaryPrefixPrompt);
-        List<Content> contents = messages.stream().map(message -> new TextContent(message.getContent()))
-                .collect(Collectors.toList());
-        UserMessage userMessage = new UserMessage(contents);
-        ChatResponse chatResponse = chatLanguageModel.chat(Arrays.asList(systemMessage, userMessage));
-        return this.createNewSummaryMessage(chatResponse.aiMessage().text(),
-                chatResponse.tokenUsage().outputTokenCount(), historyMessages);
+    public TokenMessage getSummaryMessage() {
+        return summaryMessage;
     }
 
-    /** 创建新的摘要消息记录
-     *
-     * @param newSummary 摘要内容 */
-    private TokenMessage createNewSummaryMessage(String newSummary, Integer newSummaryBodyTokenCount,
-            List<TokenMessage> historyMessages) {
+    protected String generateSummaryContent(List<TokenMessage> messages, TokenOverflowConfig effectiveConfig,
+            int summaryBudget) {
+        ProviderConfig providerConfig = effectiveConfig.getProviderConfig();
+        if (providerConfig == null) {
+            throw new IllegalArgumentException("ProviderConfig is required when summary generation is triggered");
+        }
 
+        String summaryPrefixPrompt = "最后请使用以下前缀输出摘要：" + AgentPromptTemplates.getSummaryPrefix();
+        String systemPrompt = "你是一个对话压缩器。请严格遵守以下规则：\n"
+                + "1. 只能基于给定对话生成摘要，不得杜撰。\n"
+                + "2. 保留用户目标、约束、关键事实、未完成事项、重要结论。\n"
+                + "3. 删除寒暄、重复表达和无关细节。\n"
+                + "4. 如输入中已包含旧摘要，必须继承旧摘要中的有效事实。\n"
+                + "5. 输出尽量控制在 " + summaryBudget + " tokens 以内。\n"
+                + summaryPrefixPrompt;
+
+        ChatModel chatLanguageModel = LLMProviderService.getStrand(providerConfig.getProtocol(), providerConfig);
+        SystemMessage systemMessage = new SystemMessage(systemPrompt);
+        List<Content> contents = messages.stream().map(TokenMessage::getContent).filter(Objects::nonNull)
+                .map(TextContent::new).collect(Collectors.toList());
+        UserMessage userMessage = new UserMessage(contents);
+        ChatResponse chatResponse = chatLanguageModel.chat(List.of(systemMessage, userMessage));
+
+        String summaryContent = chatResponse.aiMessage() != null ? chatResponse.aiMessage().text() : "";
+        int modelReportedTokens = extractOutputTokens(chatResponse);
+        if (modelReportedTokens > 0 && modelReportedTokens <= summaryBudget) {
+            return summaryContent;
+        }
+
+        return truncateSummaryToBudget(summaryContent, summaryBudget);
+    }
+
+    private boolean needsProcessing(List<TokenMessage> messages, TokenOverflowConfig effectiveConfig) {
+        if (messages == null || messages.isEmpty()) {
+            return false;
+        }
+
+        if (usesLegacyMessageCountThreshold(effectiveConfig)) {
+            return messages.size() > effectiveConfig.getSummaryThreshold();
+        }
+
+        return calculateTotalTokens(messages) > getTriggerTokenThreshold(effectiveConfig);
+    }
+
+    private TokenProcessResult buildUnprocessedResult(List<TokenMessage> messages) {
+        TokenProcessResult result = new TokenProcessResult();
+        result.setRetainedMessages(messages);
+        result.setStrategyName(getName());
+        result.setProcessed(false);
+        result.setTotalTokens(calculateTotalTokens(messages));
+        return result;
+    }
+
+    private List<TokenMessage> sortMessages(List<TokenMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        return messages.stream().sorted(Comparator.comparing(TokenMessage::getCreatedAt)).collect(Collectors.toList());
+    }
+
+    private RecentMessageSelection selectRecentMessages(List<TokenMessage> sortedMessages, TokenOverflowConfig config) {
+        int recentBudget = getRecentMessageBudget(config);
+        List<TokenMessage> retainedRecentMessages = new ArrayList<>();
+        int recentTokens = 0;
+
+        for (int i = sortedMessages.size() - 1; i >= 0; i--) {
+            TokenMessage message = sortedMessages.get(i);
+            int messageTokens = getMessageTokens(message);
+            if (recentBudget > 0 && (retainedRecentMessages.isEmpty() || recentTokens + messageTokens <= recentBudget)) {
+                retainedRecentMessages.add(0, message);
+                recentTokens += messageTokens;
+                continue;
+            }
+            break;
+        }
+
+        int splitIndex = sortedMessages.size() - retainedRecentMessages.size();
+        List<TokenMessage> summarizeCandidates = new ArrayList<>(sortedMessages.subList(0, splitIndex));
+
+        if (summarizeCandidates.isEmpty() && sortedMessages.size() > 1) {
+            TokenMessage oldestRetainedMessage = retainedRecentMessages.remove(0);
+            summarizeCandidates.add(oldestRetainedMessage);
+            recentTokens -= getMessageTokens(oldestRetainedMessage);
+        }
+
+        return new RecentMessageSelection(summarizeCandidates, retainedRecentMessages, Math.max(recentTokens, 0));
+    }
+
+    private List<TokenMessage> shrinkToBudget(List<TokenMessage> retainedMessages, int maxTokens) {
+        List<TokenMessage> result = new ArrayList<>(retainedMessages);
+
+        while (calculateTotalTokens(result) > maxTokens && result.size() > 1) {
+            result.remove(1);
+        }
+
+        if (calculateTotalTokens(result) > maxTokens && !result.isEmpty()) {
+            TokenMessage summary = result.get(0);
+            String truncatedSummary = truncateSummaryToBudget(summary.getContent(), maxTokens);
+            int truncatedTokens = estimateTokenCount(truncatedSummary);
+            summary.setContent(truncatedSummary);
+            summary.setBodyTokenCount(truncatedTokens);
+            summary.setTokenCount(truncatedTokens);
+        }
+
+        return result;
+    }
+
+    private TokenMessage createSummaryMessage(String summaryContent, int summaryTokens, List<TokenMessage> historyMessages) {
         TokenMessage newSummaryMessage = new TokenMessage();
+        newSummaryMessage.setId(UUID.randomUUID().toString());
         newSummaryMessage.setRole(Role.SUMMARY.name());
-        newSummaryMessage.setContent(newSummary);
-        newSummaryMessage.setBodyTokenCount(newSummaryBodyTokenCount);
-        newSummaryMessage.setTokenCount(newSummaryBodyTokenCount);
-
-        // 找到历史消息中的最早时间
-        LocalDateTime earliestTime = historyMessages.stream()
-                .filter(message -> !message.getRole().equals(Role.SUMMARY.name())).map(TokenMessage::getCreatedAt)
-                .min(LocalDateTime::compareTo).orElse(LocalDateTime.now());
-
-        // 设置创建时间和更新时间为最早时间的前一秒
-        LocalDateTime summaryTime = earliestTime.minusSeconds(1);
-        newSummaryMessage.setCreatedAt(summaryTime);
+        newSummaryMessage.setContent(summaryContent);
+        newSummaryMessage.setBodyTokenCount(summaryTokens);
+        newSummaryMessage.setTokenCount(summaryTokens);
+        newSummaryMessage.setCreatedAt(resolveSummaryCreatedAt(historyMessages));
         return newSummaryMessage;
     }
 
-    /** 计算消息列表的总token数 */
-    private int calculateTotalTokens(List<TokenMessage> messages) {
-        return messages.stream().mapToInt(m -> m.getBodyTokenCount() != null ? m.getBodyTokenCount() : 0).sum();
+    private LocalDateTime resolveSummaryCreatedAt(List<TokenMessage> historyMessages) {
+        LocalDateTime earliestTime = historyMessages.stream()
+                .filter(message -> !Role.SUMMARY.name().equals(message.getRole())).map(TokenMessage::getCreatedAt)
+                .filter(Objects::nonNull).min(LocalDateTime::compareTo).orElse(LocalDateTime.now());
+        return earliestTime.minusSeconds(1);
     }
 
-    /** 获取生成的摘要消息对象
-     * 
-     * @return 摘要消息对象 */
-    public TokenMessage getSummaryMessage() {
-        return summaryMessage;
+    private int calculateTotalTokens(List<TokenMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return 0;
+        }
+
+        return messages.stream().mapToInt(this::getMessageTokens).sum();
+    }
+
+    private int getMessageTokens(TokenMessage message) {
+        if (message == null) {
+            return 0;
+        }
+
+        Integer bodyTokenCount = message.getBodyTokenCount();
+        if (bodyTokenCount != null && bodyTokenCount > 0) {
+            return bodyTokenCount;
+        }
+
+        Integer tokenCount = message.getTokenCount();
+        return tokenCount != null ? Math.max(tokenCount, 0) : 0;
+    }
+
+    private int getTriggerTokenThreshold(TokenOverflowConfig config) {
+        int maxTokens = getMaxTokens(config);
+        Integer summaryThreshold = config.getSummaryThreshold();
+        int percent = summaryThreshold == null ? DEFAULT_TRIGGER_PERCENT : Math.min(Math.max(summaryThreshold, 1), 100);
+        return Math.max(1, (int) Math.floor(maxTokens * (percent / 100.0D)));
+    }
+
+    private int getRecentMessageBudget(TokenOverflowConfig config) {
+        int maxTokens = getMaxTokens(config);
+        double reserveRatio = config.getReserveRatio() == null ? DEFAULT_RECENT_RATIO : config.getReserveRatio();
+        double safeRatio = Math.min(Math.max(reserveRatio, 0D), 1D);
+        int recentBudget = (int) Math.floor(maxTokens * safeRatio);
+
+        if (recentBudget >= maxTokens) {
+            return Math.max(0, maxTokens - MIN_SUMMARY_BUDGET);
+        }
+        return recentBudget;
+    }
+
+    private int getMaxTokens(TokenOverflowConfig config) {
+        return config.getMaxTokens() == null || config.getMaxTokens() <= 0 ? DEFAULT_MAX_TOKENS : config.getMaxTokens();
+    }
+
+    private boolean usesLegacyMessageCountThreshold(TokenOverflowConfig config) {
+        Integer summaryThreshold = config.getSummaryThreshold();
+        return summaryThreshold != null && summaryThreshold > LEGACY_MESSAGE_COUNT_THRESHOLD;
+    }
+
+    private int clampSummaryTokens(String summaryContent, int summaryBudget) {
+        return Math.min(summaryBudget, Math.max(1, estimateTokenCount(summaryContent)));
+    }
+
+    private int estimateTokenCount(String content) {
+        if (content == null || content.isBlank()) {
+            return 1;
+        }
+        return Math.max(1, (int) Math.ceil(content.length() / APPROX_CHARS_PER_TOKEN));
+    }
+
+    private int extractOutputTokens(ChatResponse chatResponse) {
+        if (chatResponse == null || chatResponse.tokenUsage() == null || chatResponse.tokenUsage().outputTokenCount() == null) {
+            return 0;
+        }
+        return chatResponse.tokenUsage().outputTokenCount();
+    }
+
+    private String truncateSummaryToBudget(String content, int tokenBudget) {
+        if (content == null || content.isBlank()) {
+            return AgentPromptTemplates.getSummaryPrefix();
+        }
+
+        int safeTokenBudget = Math.max(1, tokenBudget);
+        int currentEstimatedTokens = estimateTokenCount(content);
+        if (currentEstimatedTokens <= safeTokenBudget) {
+            return content;
+        }
+
+        int charLimit = Math.max(8, (int) Math.floor(safeTokenBudget * APPROX_CHARS_PER_TOKEN));
+        String truncated = content.substring(0, Math.min(charLimit, content.length())).trim();
+        if (truncated.isEmpty()) {
+            return AgentPromptTemplates.getSummaryPrefix();
+        }
+
+        if (truncated.length() < content.length()) {
+            return truncated + "...";
+        }
+        return truncated;
+    }
+
+    private TokenOverflowConfig mergeConfig(TokenOverflowConfig runtimeConfig) {
+        TokenOverflowConfig effectiveConfig = new TokenOverflowConfig();
+        TokenOverflowConfig source = runtimeConfig == null ? config : runtimeConfig;
+        TokenOverflowConfig fallback = config == null ? new TokenOverflowConfig() : config;
+
+        effectiveConfig.setStrategyType(source.getStrategyType() != null ? source.getStrategyType() : fallback.getStrategyType());
+        effectiveConfig.setMaxTokens(source.getMaxTokens() != null ? source.getMaxTokens() : fallback.getMaxTokens());
+        effectiveConfig.setReserveRatio(
+                source.getReserveRatio() != null ? source.getReserveRatio() : fallback.getReserveRatio());
+        effectiveConfig.setSummaryThreshold(
+                source.getSummaryThreshold() != null ? source.getSummaryThreshold() : fallback.getSummaryThreshold());
+        effectiveConfig.setProviderConfig(
+                source.getProviderConfig() != null ? source.getProviderConfig() : fallback.getProviderConfig());
+        return effectiveConfig;
+    }
+
+    private record RecentMessageSelection(List<TokenMessage> messagesToSummarize,
+            List<TokenMessage> retainedRecentMessages, int recentTokens) {
     }
 }
