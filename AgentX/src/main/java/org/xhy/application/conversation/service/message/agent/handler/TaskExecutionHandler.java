@@ -5,12 +5,15 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.tool.ToolProvider;
 import org.springframework.stereotype.Component;
-import org.xhy.application.conversation.service.handler.content.ChatContext;
 import org.xhy.application.conversation.service.message.agent.Agent;
 import org.xhy.application.conversation.service.message.agent.AgentToolManager;
+import org.xhy.application.conversation.service.message.agent.analysis.TaskExecutionSupport;
+import org.xhy.application.conversation.service.message.agent.analysis.dto.PlannedTaskDTO;
+import org.xhy.application.conversation.service.message.agent.analysis.dto.TaskExecutionResultDTO;
+import org.xhy.application.conversation.service.message.agent.analysis.dto.TaskPlanDTO;
 import org.xhy.application.conversation.service.message.agent.event.AgentWorkflowEvent;
 import org.xhy.application.conversation.service.message.agent.manager.TaskManager;
-import org.xhy.application.conversation.service.message.agent.template.AgentPromptTemplates;
+import org.xhy.application.conversation.service.message.agent.template.StructuredTaskExecutionPromptTemplate;
 import org.xhy.application.conversation.service.message.agent.workflow.AgentWorkflowContext;
 import org.xhy.application.conversation.service.message.agent.workflow.AgentWorkflowState;
 import org.xhy.domain.conversation.constant.MessageType;
@@ -22,11 +25,17 @@ import org.xhy.domain.task.model.TaskEntity;
 import org.xhy.infrastructure.llm.LLMServiceFactory;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** 任务执行处理器 处理子任务的执行逻辑 */
+/**
+ * Executes structured subtasks produced by the planner.
+ */
 @Component
 public class TaskExecutionHandler extends AbstractAgentHandler {
+
+    public static final String EXTRA_EXECUTION_RESULT_MAP_KEY = "taskExecutionResults";
+
     private final AgentToolManager toolManager;
 
     public TaskExecutionHandler(LLMServiceFactory llmServiceFactory, AgentToolManager toolManager,
@@ -43,128 +52,164 @@ public class TaskExecutionHandler extends AbstractAgentHandler {
 
     @Override
     protected void transitionToNextState(AgentWorkflowContext<?> context) {
-        context.transitionTo(AgentWorkflowState.TASK_EXECUTING);
+        // The live runtime path orchestrates execution directly.
     }
 
     @Override
     @SuppressWarnings("unchecked")
     protected <T> void processEvent(AgentWorkflowContext<?> contextObj) {
-        AgentWorkflowContext<T> context = (AgentWorkflowContext<T>) contextObj;
+        executePlannedTasks((AgentWorkflowContext<T>) contextObj);
+    }
+
+    public <T> void executePlannedTasks(AgentWorkflowContext<T> context) {
+        TaskPlanDTO taskPlanDTO = (TaskPlanDTO) context.getExtraData(TaskSplitHandler.EXTRA_TASK_PLAN_KEY);
 
         try {
-            // 获取工具提供者
-            ChatContext chatContext = contextObj.getChatContext();
-            // ToolProvider toolProvider = toolManager.createToolProvider(toolManager.getAvailableTools());
-
-            // 依次执行每个子任务
+            ToolProvider toolProvider = createToolProvider(context);
             while (context.hasNextTask()) {
-                String taskName = context.getNextTask();
-                if (taskName == null) {
+                String executionTaskName = context.getNextTask();
+                if (executionTaskName == null) {
                     break;
                 }
 
-                TaskEntity subTask = context.getSubTaskMap().get(taskName);
-                executeSubTask(context, subTask, taskName, null);
-
-                // 更新父任务进度
+                TaskEntity subTask = context.getSubTaskMap().get(executionTaskName);
+                PlannedTaskDTO plannedTaskDTO = TaskExecutionSupport.resolvePlannedTask(taskPlanDTO, executionTaskName);
+                executeSubTask(context, subTask, executionTaskName, plannedTaskDTO, toolProvider);
                 taskManager.updateTaskProgress(context.getParentTask(), context.getCompletedTaskCount(),
                         context.getTotalTaskCount());
             }
-
-            // 所有子任务执行完成，转换到任务执行完成状态
-            context.transitionTo(AgentWorkflowState.TASK_EXECUTED);
-
         } catch (Exception e) {
             context.handleError(e);
         }
     }
 
-    /** 执行单个子任务 */
-    private <T> void executeSubTask(AgentWorkflowContext<T> context, TaskEntity subTask, String taskName,
-            ToolProvider toolProvider) {
+    private <T> ToolProvider createToolProvider(AgentWorkflowContext<T> context) {
+        if (context == null || context.getChatContext() == null || context.getChatContext().getAgent() == null) {
+            return null;
+        }
+
+        return toolManager.createToolProvider(
+                context.getChatContext().getAgent().getToolIds(),
+                context.getChatContext().getAgent().getToolPresetParams(),
+                context.getChatContext().getUserId());
+    }
+
+    private <T> void executeSubTask(AgentWorkflowContext<T> context, TaskEntity subTask, String executionTaskName,
+            PlannedTaskDTO plannedTaskDTO, ToolProvider toolProvider) {
+        if (subTask == null) {
+            context.handleError(new IllegalStateException("子任务不存在: " + executionTaskName));
+            return;
+        }
 
         try {
             String taskId = subTask.getId();
-            // 更新任务状态为进行中
             taskManager.updateTaskStatus(subTask, TaskStatus.IN_PROGRESS);
 
-            // 保存执行消息
-            MessageEntity taskCallMessageEntity = createMessageEntity(context, MessageType.TASK_EXEC, taskName, 0);
+            MessageEntity taskCallMessageEntity = createMessageEntity(context, MessageType.TASK_EXEC,
+                    executionTaskName, 0);
             messageDomainService.saveMessage(Collections.singletonList(taskCallMessageEntity));
 
-            // 通知前端当前执行的任务
-            context.sendEndMessage(taskName, MessageType.TASK_EXEC);
-
-            // 通知前端任务状态
+            context.sendEndMessage(executionTaskName, MessageType.TASK_EXEC);
             context.sendEndWithTaskIdMessage(taskId, MessageType.TASK_STATUS_TO_LOADING);
 
-            // 获取用户原始请求
-            String userRequest = context.getChatContext().getUserMessage();
+            String prompt = StructuredTaskExecutionPromptTemplate.buildPrompt(
+                    context.getChatContext().getUserMessage(),
+                    plannedTaskDTO,
+                    TaskExecutionSupport.buildPreviousTaskContext(getExecutionResults(context)));
 
-            // 获取之前子任务的结果
-            Map<String, String> previousTaskResults = context.getTaskResults();
-
-            // 构建任务提示词
-            String taskPrompt = AgentPromptTemplates.getTaskExecutionPrompt(userRequest, taskName, previousTaskResults);
-
-            // 执行子任务
-            ChatModel strandClient = llmServiceFactory.getStrandClient(context.getChatContext().getProvider(),
+            ChatModel standardClient = llmServiceFactory.getStandardClient(context.getChatContext().getProvider(),
                     context.getChatContext().getModel());
 
-            // 创建Agent服务
-            Agent agent = AiServices.builder(Agent.class).chatModel(strandClient).toolProvider(toolProvider).build();
+            AiServices<Agent> builder = AiServices.builder(Agent.class).chatModel(standardClient);
+            if (toolProvider != null) {
+                builder.toolProvider(toolProvider);
+            }
+            Agent agent = builder.build();
 
-            // 执行任务，直接使用完整提示词
-            AiMessage aiMessage = agent.chat(taskPrompt);
-
-            // 处理工具调用
+            AiMessage aiMessage = agent.chat(prompt);
             if (aiMessage.hasToolExecutionRequests()) {
                 handleToolCalls(aiMessage, context);
             }
 
-            // 获取任务结果
             String taskResult = aiMessage.text();
+            TaskExecutionResultDTO executionResult = buildSuccessResult(subTask, executionTaskName, plannedTaskDTO,
+                    taskResult);
+            addExecutionResult(context, executionResult);
 
-            // 保存子任务结果
-            context.addTaskResult(taskName, taskResult);
+            context.addTaskResult(executionTaskName, taskResult);
             taskManager.completeTask(subTask, taskResult);
-
-            // 通知前端任务完成
             context.sendEndWithTaskIdMessage(taskId, MessageType.TASK_STATUS_TO_FINISH);
-
         } catch (Exception e) {
-            // 处理子任务执行异常，但不影响其他子任务执行
+            TaskExecutionResultDTO executionResult = buildFailureResult(subTask, executionTaskName, plannedTaskDTO, e);
+            addExecutionResult(context, executionResult);
+
             subTask.updateStatus(TaskStatus.FAILED);
             subTask.setTaskResult("执行失败: " + e.getMessage());
             taskManager.updateTaskStatus(subTask, TaskStatus.FAILED);
 
-            // 记录错误并继续
-            context.sendEndMessage("任务 '" + taskName + "' 执行失败: " + e.getMessage(), MessageType.TEXT);
-
-            // 为了工作流继续，我们仍然增加已完成任务计数
-            context.addTaskResult(taskName, "执行失败: " + e.getMessage());
+            context.sendEndMessage("任务 '" + executionTaskName + "' 执行失败: " + e.getMessage(), MessageType.TEXT);
+            context.addTaskResult(executionTaskName, "执行失败: " + e.getMessage());
         }
     }
 
-    /** 处理工具调用 */
     private <T> void handleToolCalls(AiMessage aiMessage, AgentWorkflowContext<T> context) {
-        // 创建工具调用消息实体
         MessageEntity toolCallMessageEntity = createMessageEntity(context, MessageType.TOOL_CALL, null, 0);
         StringBuilder toolCallsContent = new StringBuilder("工具调用:\n");
 
         aiMessage.toolExecutionRequests().forEach(toolExecutionRequest -> {
             String toolName = toolExecutionRequest.name();
             toolCallsContent.append("- ").append(toolName).append("\n");
-
-            // 通知前端工具调用
             context.sendEndMessage(toolName, MessageType.TOOL_CALL);
         });
 
-        // 设置工具调用内容并保存
         toolCallMessageEntity.setContent(toolCallsContent.toString());
         messageDomainService.saveMessage(Collections.singletonList(toolCallMessageEntity));
-
-        // 更新上下文
         context.getChatContext().getContextEntity().getActiveMessages().add(toolCallMessageEntity.getId());
     }
+
+    private TaskExecutionResultDTO buildSuccessResult(TaskEntity subTask, String executionTaskName,
+            PlannedTaskDTO plannedTaskDTO, String taskResult) {
+        TaskExecutionResultDTO resultDTO = buildBaseExecutionResult(subTask, executionTaskName, plannedTaskDTO);
+        resultDTO.setSuccess(true);
+        resultDTO.setResult(taskResult);
+        return resultDTO;
+    }
+
+    private TaskExecutionResultDTO buildFailureResult(TaskEntity subTask, String executionTaskName,
+            PlannedTaskDTO plannedTaskDTO, Exception e) {
+        TaskExecutionResultDTO resultDTO = buildBaseExecutionResult(subTask, executionTaskName, plannedTaskDTO);
+        resultDTO.setSuccess(false);
+        resultDTO.setErrorMessage(e.getMessage());
+        resultDTO.setResult("执行失败: " + e.getMessage());
+        return resultDTO;
+    }
+
+    private TaskExecutionResultDTO buildBaseExecutionResult(TaskEntity subTask, String executionTaskName,
+            PlannedTaskDTO plannedTaskDTO) {
+        TaskExecutionResultDTO resultDTO = new TaskExecutionResultDTO();
+        resultDTO.setTaskId(subTask.getId());
+        resultDTO.setTaskName(executionTaskName);
+        if (plannedTaskDTO != null) {
+            resultDTO.setPlannedTaskId(plannedTaskDTO.getId());
+            resultDTO.setTaskType(plannedTaskDTO.getType());
+        }
+        return resultDTO;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, TaskExecutionResultDTO> getExecutionResults(AgentWorkflowContext<?> context) {
+        Object cachedResults = context.getExtraData(EXTRA_EXECUTION_RESULT_MAP_KEY);
+        if (cachedResults instanceof Map<?, ?> resultMap) {
+            return (Map<String, TaskExecutionResultDTO>) resultMap;
+        }
+
+        Map<String, TaskExecutionResultDTO> executionResults = new LinkedHashMap<>();
+        context.addExtraData(EXTRA_EXECUTION_RESULT_MAP_KEY, executionResults);
+        return executionResults;
+    }
+
+    private void addExecutionResult(AgentWorkflowContext<?> context, TaskExecutionResultDTO executionResult) {
+        getExecutionResults(context).put(executionResult.getTaskName(), executionResult);
+    }
 }
+

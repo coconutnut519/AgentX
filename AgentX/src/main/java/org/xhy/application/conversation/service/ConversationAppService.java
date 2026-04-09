@@ -306,6 +306,7 @@ public class ConversationAppService {
         chatContext.setSessionId(chatRequest.getSessionId());
         chatContext.setUserId(userId);
         chatContext.setUserMessage(chatRequest.getMessage());
+        chatContext.setPlanAction(chatRequest.getPlanAction());
         chatContext.setAgent(agent);
         chatContext.setOriginalModel(originalModel);
         chatContext.setModel(selectedModel);

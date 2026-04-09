@@ -26,6 +26,10 @@ public class MessageDomainService {
         return messageRepository.selectByIds(ids);
     }
 
+    public MessageEntity getById(String messageId) {
+        return messageRepository.selectById(messageId);
+    }
+
     /** 保存消息并且更新消息到上下文 */
     public void saveMessageAndUpdateContext(List<MessageEntity> messageEntities, ContextEntity contextEntity) {
         if (messageEntities == null || messageEntities.isEmpty()) {

@@ -27,6 +27,7 @@ export enum MessageType {
    * 工具调用消息
    */
   TOOL_CALL = "TOOL_CALL",
+  TASK_PLAN = "TASK_PLAN",
 
   /**
    * 任务执行消息

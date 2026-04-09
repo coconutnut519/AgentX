@@ -19,6 +19,9 @@ public enum MessageType {
     /** 任务拆分结束消息 */
     TASK_SPLIT_FINISH,
 
+    /** 任务计划消息 */
+    TASK_PLAN,
+
     /** RAG检索开始 */
     RAG_RETRIEVAL_START,
 

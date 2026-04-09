@@ -55,7 +55,7 @@ public class SystemPromptGeneratorAppService {
         }
 
         // 4. 创建LLM客户端
-        ChatModel chatModel = llmServiceFactory.getStrandClient(provider, model);
+        ChatModel chatModel = llmServiceFactory.getStandardClient(provider, model);
 
         // 5. 调用系统提示词生成领域服务（只负责核心生成逻辑）
         return systemPromptGeneratorDomainService.generateSystemPrompt(request.getAgentName(),

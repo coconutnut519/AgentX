@@ -49,6 +49,13 @@ public class SessionDomainService {
                 .eq(SessionEntity::getId, sessionId).eq(SessionEntity::getUserId, userId));
     }
 
+    public void updateSessionMetadata(String sessionId, String userId, String metadata) {
+        int affected = sessionRepository.updateSessionMetadata(sessionId, userId, metadata);
+        if (affected == 0) {
+            throw new BusinessException("会话不存在");
+        }
+    }
+
     /** 创建会话
      * 
      * @param agentId 助理id
@@ -93,3 +100,4 @@ public class SessionDomainService {
     }
 
 }
+

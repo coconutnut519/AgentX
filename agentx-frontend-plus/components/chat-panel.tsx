@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Send, Wrench, Clock, Square } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,12 @@ import { zhCN } from 'date-fns/locale'
 import { nanoid } from 'nanoid'
 import MultiModalUpload, { type ChatFile } from "@/components/multi-modal-upload"
 import MessageFileDisplay from "@/components/message-file-display"
+import {
+  createEmptyWorkflowState,
+  type WorkflowPlan,
+  type TaskWorkflowState,
+  TaskWorkflowPanel,
+} from "@/components/task-workflow-panel"
 
 interface ChatPanelProps {
   conversationId: string
@@ -53,6 +59,7 @@ interface StreamData {
   model?: string
   timestamp: number
   messageType?: string // 消息类型
+  taskId?: string
   files?: string[] // 新增：文件URL列表
 }
 
@@ -61,9 +68,214 @@ type MessageTypeValue =
   | "TEXT" 
   | "TOOL_CALL";
 
+const workflowMessageTypes = new Set<string>([
+  MessageType.TASK_PLAN,
+  MessageType.TASK_EXEC,
+  MessageType.TASK_SPLIT_FINISH,
+  MessageType.TASK_STATUS_TO_LOADING,
+  MessageType.TASK_STATUS_TO_FINISH,
+  MessageType.TOOL_CALL,
+])
+
+const createWorkflowTaskKey = (taskName: string, taskId?: string) => taskId || `task:${taskName}`
+
+const isWorkflowMessageType = (messageType?: string) => {
+  if (!messageType) {
+    return false
+  }
+  return workflowMessageTypes.has(messageType)
+}
+
+const isDisplayableChatMessage = (message: MessageInterface) => {
+  return message.role === "USER" || !message.type || message.type === MessageType.TEXT
+}
+
+const parseWorkflowPlan = (content?: string): WorkflowPlan | null => {
+  if (!content) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(content) as Partial<WorkflowPlan> & { tasks?: Array<any> }
+    const parsedTasks = Array.isArray(parsed.tasks)
+      ? parsed.tasks
+          .map((task) => ({
+            id: typeof task?.id === "string" ? task.id : undefined,
+            title:
+              (typeof task?.title === "string" && task.title.trim()) ||
+              (typeof task?.name === "string" && task.name.trim()) ||
+              "未命名任务",
+            description: typeof task?.description === "string" ? task.description : undefined,
+            type: typeof task?.type === "string" ? task.type : undefined,
+          }))
+          .filter((task) => Boolean(task.title))
+      : []
+
+    return {
+      goal: typeof parsed.goal === "string" ? parsed.goal : undefined,
+      version: typeof parsed.version === "number" ? parsed.version : undefined,
+      tasks: parsedTasks,
+    }
+  } catch (error) {
+    return null
+  }
+}
+
+const createTasksFromPlan = (plan: WorkflowPlan): TaskWorkflowState["tasks"] => {
+  return plan.tasks.map((task, index) => ({
+    key: createWorkflowTaskKey(task.title, task.id || `plan-task-${index + 1}`),
+    taskId: task.id,
+    name: task.title,
+    status: "queued" as const,
+    updatedAt: Date.now(),
+  }))
+}
+
+const buildWorkflowStateFromMessages = (messages: MessageInterface[]): TaskWorkflowState => {
+  const workflow = createEmptyWorkflowState()
+
+  messages.forEach((message) => {
+    if (message.type === MessageType.TASK_PLAN && message.content) {
+      const plan = parseWorkflowPlan(message.content)
+      if (plan) {
+        workflow.isVisible = true
+        workflow.planningCompleted = true
+        workflow.plan = plan
+        workflow.planVersion = plan.version ?? null
+        workflow.waitingForConfirmation = true
+        workflow.canExecute = true
+        workflow.tasks = createTasksFromPlan(plan)
+      }
+      return
+    }
+
+    if (message.type === MessageType.TASK_EXEC && message.content) {
+      workflow.isVisible = true
+      workflow.planningCompleted = true
+      workflow.tasks.push({
+        key: createWorkflowTaskKey(message.content),
+        name: message.content,
+        status: "completed",
+        updatedAt: Date.now(),
+      })
+      return
+    }
+
+    if (message.type === MessageType.TOOL_CALL && message.content) {
+      workflow.isVisible = true
+      message.content
+        .split("\n")
+        .map((line) => line.replace(/^-+\s*/, "").trim())
+        .filter((line) => Boolean(line) && line !== "工具调用:")
+        .forEach((toolName) => {
+          if (!workflow.toolCalls.includes(toolName)) {
+            workflow.toolCalls.push(toolName)
+          }
+        })
+    }
+  })
+
+  return workflow
+}
+
+const applyWorkflowEvent = (previous: TaskWorkflowState, data: StreamData): TaskWorkflowState => {
+  const next: TaskWorkflowState = {
+    ...previous,
+    tasks: [...previous.tasks],
+    toolCalls: [...previous.toolCalls],
+  }
+
+  const findLatestIncompleteTaskIndex = () => {
+    for (let index = next.tasks.length - 1; index >= 0; index -= 1) {
+      if (next.tasks[index].status !== "completed") {
+        return index
+      }
+    }
+    return next.tasks.length - 1
+  }
+
+  switch (data.messageType) {
+    case MessageType.TASK_PLAN: {
+      const plan = parseWorkflowPlan(data.content)
+      if (!plan) {
+        return next
+      }
+      next.isVisible = true
+      next.planningCompleted = true
+      next.plan = plan
+      next.planVersion = plan.version ?? null
+      next.waitingForConfirmation = true
+      next.canExecute = true
+      next.tasks = createTasksFromPlan(plan)
+      next.toolCalls = []
+      return next
+    }
+    case MessageType.TASK_SPLIT_FINISH:
+      next.isVisible = true
+      next.planningCompleted = true
+      return next
+    case MessageType.TASK_EXEC:
+      if (!data.content) {
+        return next
+      }
+      next.isVisible = true
+      next.planningCompleted = true
+      next.tasks.push({
+        key: createWorkflowTaskKey(data.content),
+        name: data.content,
+        status: "queued",
+        updatedAt: data.timestamp || Date.now(),
+      })
+      return next
+    case MessageType.TASK_STATUS_TO_LOADING: {
+      next.isVisible = true
+      const targetIndex = next.tasks.findIndex((task) => task.taskId === data.taskId)
+      const fallbackIndex = findLatestIncompleteTaskIndex()
+      const indexToUpdate = targetIndex >= 0 ? targetIndex : fallbackIndex
+      if (indexToUpdate >= 0) {
+        const task = next.tasks[indexToUpdate]
+        next.tasks[indexToUpdate] = {
+          ...task,
+          key: createWorkflowTaskKey(task.name, data.taskId || task.taskId),
+          taskId: data.taskId || task.taskId,
+          status: "running",
+          updatedAt: data.timestamp || Date.now(),
+        }
+      }
+      return next
+    }
+    case MessageType.TASK_STATUS_TO_FINISH: {
+      next.isVisible = true
+      const targetIndex = next.tasks.findIndex((task) => task.taskId === data.taskId)
+      const fallbackIndex = findLatestIncompleteTaskIndex()
+      const indexToUpdate = targetIndex >= 0 ? targetIndex : fallbackIndex
+      if (indexToUpdate >= 0) {
+        const task = next.tasks[indexToUpdate]
+        next.tasks[indexToUpdate] = {
+          ...task,
+          key: createWorkflowTaskKey(task.name, data.taskId || task.taskId),
+          taskId: data.taskId || task.taskId,
+          status: "completed",
+          updatedAt: data.timestamp || Date.now(),
+        }
+      }
+      return next
+    }
+    case MessageType.TOOL_CALL:
+      if (data.content && !next.toolCalls.includes(data.content)) {
+        next.isVisible = true
+        next.toolCalls.push(data.content)
+      }
+      return next
+    default:
+      return next
+  }
+}
+
 export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName = "AI助手", onToggleScheduledTaskPanel, multiModal = false }: ChatPanelProps) {
   const [input, setInput] = useState("")
   const [messages, setMessages] = useState<MessageInterface[]>([])
+  const [workflowState, setWorkflowState] = useState<TaskWorkflowState>(createEmptyWorkflowState())
   const [isTyping, setIsTyping] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -73,6 +285,7 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
   const [uploadedFiles, setUploadedFiles] = useState<ChatFile[]>([]) // 新增：已上传的文件列表
   const [isInterrupting, setIsInterrupting] = useState(false) // 新增：中断状态
   const [canInterrupt, setCanInterrupt] = useState(false) // 新增：是否可以中断
+  const [isExecutingPlan, setIsExecutingPlan] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatContainerRef = useRef<HTMLDivElement>(null)
@@ -99,10 +312,12 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
     };
     setCompletedTextMessages(new Set());
     messageSequenceNumber.current = 0;
+    setWorkflowState(createEmptyWorkflowState());
     
     // 重置中断相关状态
     setCanInterrupt(false);
     setIsInterrupting(false);
+    setIsExecutingPlan(false);
     if (abortControllerRef.current) {
       abortControllerRef.current = null;
     }
@@ -174,6 +389,7 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
           })
           
           setMessages(formattedMessages)
+          setWorkflowState(buildWorkflowStateFromMessages(formattedMessages))
         } else {
           const errorMessage = messagesResponse.message || "获取会话消息失败"
  
@@ -233,12 +449,102 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
       })
     } finally {
       setIsInterrupting(false)
+      setIsExecutingPlan(false)
       setCanInterrupt(false)
       setIsTyping(false)
       setIsThinking(false)
     }
   }
 
+  const handleExecutePlan = async () => {
+    if (!conversationId || isTyping || isExecutingPlan) {
+      return
+    }
+
+    setIsExecutingPlan(true)
+    setIsTyping(true)
+    setIsThinking(true)
+    setCanInterrupt(true)
+    setIsInterrupting(false)
+    setCurrentAssistantMessage(null)
+    scrollToBottom()
+
+    abortControllerRef.current = new AbortController()
+    setCompletedTextMessages(new Set())
+    resetMessageAccumulator()
+    hasReceivedFirstResponse.current = false
+    messageSequenceNumber.current = 0
+
+    try {
+      const response = await streamChat("", conversationId, undefined, "EXECUTE_PLAN")
+
+      if (!response.ok) {
+        setIsTyping(false)
+        setIsThinking(false)
+        return
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error("No reader available")
+      }
+
+      const baseMessageId = Date.now().toString()
+      hasReceivedFirstResponse.current = false
+      messageContentAccumulator.current = {
+        content: "",
+        type: MessageType.TEXT
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ""
+
+      while (true) {
+        if (abortControllerRef.current?.signal.aborted) {
+          break
+        }
+
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n\n")
+        buffer = lines.pop() || ""
+
+        for (const line of lines) {
+          if (line.startsWith("data:")) {
+            try {
+              let jsonStr = line.substring(5)
+              if (jsonStr.startsWith("data:")) {
+                jsonStr = jsonStr.substring(5)
+              }
+
+              const data = JSON.parse(jsonStr) as StreamData
+              handleStreamDataMessage(data, baseMessageId)
+            } catch (error) {
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if (!(error instanceof Error && error.name === "AbortError")) {
+        setIsThinking(false)
+        toast({
+          title: "执行计划失败",
+          description: error instanceof Error ? error.message : "未知错误",
+          variant: "destructive",
+        })
+      }
+    } finally {
+      setIsTyping(false)
+      setIsExecutingPlan(false)
+      setCanInterrupt(false)
+      setIsInterrupting(false)
+      if (abortControllerRef.current) {
+        abortControllerRef.current = null
+      }
+    }
+  }
   // 监听滚动事件
   useEffect(() => {
     const chatContainer = chatContainerRef.current
@@ -283,6 +589,7 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
     setCurrentAssistantMessage(null) // 重置助手消息状态
     setCanInterrupt(true) // 启用中断功能
     setIsInterrupting(false) // 重置中断状态
+    setWorkflowState(createEmptyWorkflowState())
     scrollToBottom() // 用户发送新消息时强制滚动到底部
     
     // 创建新的AbortController
@@ -423,6 +730,10 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
     
     // 获取消息类型，默认为TEXT
     const messageType = data.messageType as MessageType || MessageType.TEXT;
+
+    if (isWorkflowMessageType(data.messageType)) {
+      setWorkflowState((previous) => applyWorkflowEvent(previous, data))
+    }
     
     // 生成当前消息序列的唯一ID
     const currentMessageId = `assistant-${messageType}-${baseMessageId}-seq${messageSequenceNumber.current}`;
@@ -430,7 +741,7 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
  
     
     // 处理消息内容（用于UI显示）
-    const displayableTypes = [undefined, "TEXT", "TOOL_CALL"];
+    const displayableTypes = [undefined, "TEXT"];
     const isDisplayableType = displayableTypes.includes(data.messageType);
     
     if (isDisplayableType && data.content) {
@@ -622,6 +933,8 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
     });
   };
 
+  const displayMessages = messages.filter(isDisplayableChatMessage)
+
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-white">
       <div 
@@ -643,15 +956,21 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
                 {error}
               </div>
             )}
+
+            <TaskWorkflowPanel
+              workflow={workflowState}
+              onExecutePlan={handleExecutePlan}
+              isExecutingPlan={isExecutingPlan}
+            />
             
             {/* 消息内容 */}
             <div className="space-y-6 w-full">
-              {messages.length === 0 ? (
+              {displayMessages.length === 0 ? (
                 <div className="flex items-center justify-center h-20 w-full">
                   <p className="text-gray-400">暂无消息，开始发送消息吧</p>
                 </div>
               ) : (
-                messages.map((message) => (
+                displayMessages.map((message) => (
                   <div
                     key={message.id}
                     className={`w-full`}

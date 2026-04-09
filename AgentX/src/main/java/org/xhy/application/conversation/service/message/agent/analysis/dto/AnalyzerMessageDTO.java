@@ -2,7 +2,8 @@ package org.xhy.application.conversation.service.message.agent.analysis.dto;
 
 public class AnalyzerMessageDTO {
 
-    private boolean isQuestion;
+    private boolean isQuestion;//isQuestion = true：普通问答
+//isQuestion = false：复杂任务
 
     private String reply;
 

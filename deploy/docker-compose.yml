@@ -1,4 +1,4 @@
-# AgentX统一Docker Compose配置
+﻿# AgentX统一Docker Compose配置
 # 支持通过环境变量控制不同部署模式：local/production/external
 
 name: agentx
@@ -126,6 +126,18 @@ services:
 
       # 其他配置
       FILE_STORAGE_PATH: ${FILE_STORAGE_PATH:-/app/storage}
+
+      # File Storage Platform and S3 (optional)
+      # - Dev defaults to local-plus (see application-dev.yml)
+      # - To enable S3, set S3_* in deploy/.env and switch default platform in config
+      FILE_STORAGE_PLATFORM: ${FILE_STORAGE_PLATFORM:-}
+      FILE_STORAGE_DOMAIN: ${FILE_STORAGE_DOMAIN:-}
+      S3_SECRET_ID: ${S3_SECRET_ID:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-}
+      S3_DOMAIN: ${S3_DOMAIN:-}
     volumes:
       - storage-data:/app/storage
       - ./logs:/app/logs
@@ -160,7 +172,7 @@ services:
     container_name: agentx-frontend
     environment:
       # API配置
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080/api}
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8088/api}
       
       # Next.js配置
       NODE_ENV: ${NODE_ENV:-development}
@@ -214,3 +226,5 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+
+

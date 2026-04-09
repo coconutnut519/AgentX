@@ -79,7 +79,7 @@ public class InfoRequirementService {
     }
 
     /** 检查信息完整性并等待用户输入（如需要） 此方法结合了初始检查和后续检查，增加了尝试次数限制
-     * 
+     *
      * @param context 工作流上下文
      * @return 带有信息完整性状态的CompletableFuture */
     public CompletableFuture<Boolean> checkInfoAndWaitIfNeeded(AgentWorkflowContext<?> context) {
@@ -88,7 +88,7 @@ public class InfoRequirementService {
     }
 
     /** 检查信息完整性的实际实现，带有尝试次数控制
-     * 
+     *
      * @param context 工作流上下文
      * @param attemptCount 当前尝试次数
      * @return 带有信息完整性状态的CompletableFuture */
@@ -115,7 +115,7 @@ public class InfoRequirementService {
 
         try {
             // 获取模型客户端
-            ChatModel strandClient = getStrandClient(context);
+            ChatModel strandClient = getStandardClient(context);
 
             // 构建请求
             ChatRequest request = buildRequest(context);
@@ -228,8 +228,8 @@ public class InfoRequirementService {
     }
 
     /** 获取Strand客户端 */
-    protected <T> ChatModel getStrandClient(AgentWorkflowContext<T> context) {
-        return llmServiceFactory.getStrandClient(context.getChatContext().getProvider(),
+    protected <T> ChatModel getStandardClient(AgentWorkflowContext<T> context) {
+        return llmServiceFactory.getStandardClient(context.getChatContext().getProvider(),
                 context.getChatContext().getModel());
     }
 

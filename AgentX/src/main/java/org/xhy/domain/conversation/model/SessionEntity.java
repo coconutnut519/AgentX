@@ -2,12 +2,13 @@ package org.xhy.domain.conversation.model;
 
 import com.baomidou.mybatisplus.annotation.*;
 import com.baomidou.mybatisplus.extension.activerecord.Model;
+import org.xhy.infrastructure.converter.JsonStringTypeHandler;
 import org.xhy.infrastructure.entity.BaseEntity;
 
 import java.time.LocalDateTime;
 
 /** 会话实体类，代表一个独立的对话会话/主题 */
-@TableName("sessions")
+@TableName(value = "sessions", autoResultMap = true)
 public class SessionEntity extends BaseEntity {
 
     /** 会话唯一ID */
@@ -35,7 +36,7 @@ public class SessionEntity extends BaseEntity {
     private boolean isArchived;
 
     /** 会话元数据，可存储其他自定义信息 */
-    @TableField("metadata")
+    @TableField(value = "metadata", typeHandler = JsonStringTypeHandler.class)
     private String metadata;
 
     /** 无参构造函数 */
@@ -128,3 +129,4 @@ public class SessionEntity extends BaseEntity {
     }
 
 }
+

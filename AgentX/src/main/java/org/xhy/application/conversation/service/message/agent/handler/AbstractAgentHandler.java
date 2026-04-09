@@ -86,8 +86,8 @@ public abstract class AbstractAgentHandler implements AgentEventHandler {
     }
 
     /** 获取标准模型客户端 */
-    protected <T> ChatModel getStrandClient(AgentWorkflowContext<T> context) {
-        return llmServiceFactory.getStrandClient(context.getChatContext().getProvider(),
+    protected <T> ChatModel getStandardClient(AgentWorkflowContext<T> context) {
+        return llmServiceFactory.getStandardClient(context.getChatContext().getProvider(),
                 context.getChatContext().getModel());
     }
 

@@ -69,7 +69,12 @@ async function handleErrorResponse(response: Response): Promise<Response> {
  * @param fileUrls 可选的文件URL列表，用于多模态功能
  * @returns 流式响应
  */
-export async function streamChat(sessionId: string, message: string, fileUrls?: string[]): Promise<Response> {
+export async function streamChat(
+  sessionId: string,
+  message: string,
+  fileUrls?: string[],
+  planAction?: string
+): Promise<Response> {
   try {
     // 使用API_ENDPOINTS.CHAT常量
     const url = `${API_CONFIG.BASE_URL}${API_ENDPOINTS.CHAT}`
@@ -86,6 +91,10 @@ export async function streamChat(sessionId: string, message: string, fileUrls?: 
     if (fileUrls && fileUrls.length > 0) {
       requestBody.fileUrls = fileUrls
  
+    }
+
+    if (planAction) {
+      requestBody.planAction = planAction
     }
     
     const response = await fetch(url, {

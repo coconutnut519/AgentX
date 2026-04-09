@@ -1,5 +1,23 @@
-// API地址配置 - 环境适配，开发环境直连，生产环境使用nginx代理
+// API地址配置 - 优先使用环境变量，其次按运行环境回退
+function normalizeApiUrl(apiUrl: string): string {
+  return apiUrl.replace(/\/+$/, "");
+}
+
+function getConfiguredApiUrl(): string | null {
+  const configuredApiUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (!configuredApiUrl) {
+    return null;
+  }
+
+  return normalizeApiUrl(configuredApiUrl);
+}
+
 function getDefaultApiUrl(): string {
+  const configuredApiUrl = getConfiguredApiUrl();
+  if (configuredApiUrl) {
+    return configuredApiUrl;
+  }
+
   // 客户端环境
   if (typeof window !== 'undefined') {
     const { protocol, hostname } = window.location;

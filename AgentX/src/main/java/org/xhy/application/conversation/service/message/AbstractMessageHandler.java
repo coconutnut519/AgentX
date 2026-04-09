@@ -154,14 +154,14 @@ public abstract class AbstractMessageHandler {
     }
 
     /** 追踪钩子方法 - 对话开始时调用 子类可以覆盖此方法实现追踪逻辑
-     * 
+     *
      * @param chatContext 对话上下文 */
     protected void onChatStart(ChatContext chatContext) {
         // 默认空实现，子类可选择性覆盖
     }
 
     /** 追踪钩子方法 - 用户消息处理完成时调用
-     * 
+     *
      * @param chatContext 对话上下文
      * @param userMessage 用户消息实体 */
     protected void onUserMessageProcessed(ChatContext chatContext, MessageEntity userMessage) {
@@ -169,7 +169,7 @@ public abstract class AbstractMessageHandler {
     }
 
     /** 追踪钩子方法 - 模型调用完成时调用
-     * 
+     *
      * @param chatContext 对话上下文
      * @param chatResponse 模型响应
      * @param modelCallInfo 模型调用信息 */
@@ -179,7 +179,7 @@ public abstract class AbstractMessageHandler {
     }
 
     /** 追踪钩子方法 - 工具调用完成时调用
-     * 
+     *
      * @param chatContext 对话上下文
      * @param toolCallInfo 工具调用信息 */
     protected void onToolCallCompleted(ChatContext chatContext, ToolCallInfo toolCallInfo) {
@@ -187,7 +187,7 @@ public abstract class AbstractMessageHandler {
     }
 
     /** 追踪钩子方法 - 对话完成时调用
-     * 
+     *
      * @param chatContext 对话上下文
      * @param success 是否成功
      * @param errorMessage 错误信息（成功时为null） */
@@ -215,7 +215,7 @@ public abstract class AbstractMessageHandler {
     }
 
     /** 追踪钩子方法 - 发生异常时调用
-     * 
+     *
      * @param chatContext 对话上下文
      * @param errorPhase 错误阶段
      * @param throwable 异常信息 */
@@ -250,7 +250,7 @@ public abstract class AbstractMessageHandler {
             ToolProvider toolProvider) {
 
         // 1. 获取同步LLM客户端
-        ChatModel syncClient = llmServiceFactory.getStrandClient(chatContext.getProvider(), chatContext.getModel());
+        ChatModel syncClient = llmServiceFactory.getStandardClient(chatContext.getProvider(), chatContext.getModel());
 
         // 2. 保存用户消息和摘要
         this.saveMessageAndUpdateContext(chatContext, userEntity);
@@ -627,7 +627,7 @@ public abstract class AbstractMessageHandler {
                         sessionId, fallbackChain);
                 ProviderEntity provider = result.getProvider();
                 ModelEntity selectedModel = result.getModel();
-                ChatModel strandClient = llmServiceFactory.getStrandClient(provider, selectedModel);
+                ChatModel strandClient = llmServiceFactory.getStandardClient(provider, selectedModel);
                 ArrayList<ChatMessage> chatMessages = new ArrayList<>();
                 chatMessages.add(new SystemMessage(AgentPromptTemplates.getStartConversationPrompt()));
                 chatMessages.add(new UserMessage(chatContext.getUserMessage()));
@@ -740,7 +740,7 @@ public abstract class AbstractMessageHandler {
     }
 
     /** 构建模型调用信息
-     * 
+     *
      * @param chatContext 对话上下文
      * @param chatResponse 模型响应
      * @param callTime 调用耗时（毫秒）
@@ -767,7 +767,7 @@ public abstract class AbstractMessageHandler {
     }
 
     /** 构建工具调用信息
-     * 
+     *
      * @param toolExecution 工具执行信息
      * @return 工具调用信息 */
     protected ToolCallInfo buildToolCallInfo(ToolExecution toolExecution) {

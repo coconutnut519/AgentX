@@ -29,6 +29,9 @@ public class ChatContext {
     /** 用户消息 */
     private String userMessage;
 
+    /** 计划动作：如 EXECUTE_PLAN */
+    private String planAction;
+
     /** 智能体实体 */
     private AgentEntity agent;
 
@@ -69,6 +72,14 @@ public class ChatContext {
 
     public void setUserMessage(String userMessage) {
         this.userMessage = userMessage;
+    }
+
+    public String getPlanAction() {
+        return planAction;
+    }
+
+    public void setPlanAction(String planAction) {
+        this.planAction = planAction;
     }
 
     public AgentEntity getAgent() {

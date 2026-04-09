@@ -12,6 +12,7 @@ import org.xhy.domain.conversation.constant.Role;
 import org.xhy.domain.llm.model.config.ProviderConfig;
 import org.xhy.domain.llm.model.enums.ModelType;
 import org.xhy.domain.scheduledtask.constant.RepeatType;
+import org.xhy.domain.task.constant.TaskStatus;
 import org.xhy.domain.scheduledtask.constant.ScheduleTaskStatus;
 import org.xhy.domain.scheduledtask.model.RepeatConfig;
 import org.xhy.domain.tool.constant.ToolStatus;
@@ -49,6 +50,7 @@ public class MyBatisTypeHandlerConfig {
         typeHandlerRegistry.register(ModelType.class, new ModelTypeConverter());
         typeHandlerRegistry.register(Role.class, new RoleConverter());
         typeHandlerRegistry.register(MessageType.class, new MessageTypeConverter());
+        typeHandlerRegistry.register(TaskStatus.class, new TaskStatusConverter());
         typeHandlerRegistry.register(ToolStatus.class, new ToolStatusConverter());
         typeHandlerRegistry.register(ToolType.class, new ToolTypeConverter());
         typeHandlerRegistry.register(UploadType.class, new UploadTypeConverter());

@@ -11,7 +11,7 @@ public class CreateAgentRequest {
     @NotBlank(message = "助理名称不可为空")
     private String name;
     private String description;
-    private String avatar;
+    private String avatar;//头像
 
     private String systemPrompt;
     private String welcomeMessage;
